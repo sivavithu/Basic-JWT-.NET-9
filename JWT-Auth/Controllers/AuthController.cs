@@ -1,6 +1,7 @@
-﻿using JWT_Auth.Enitities;
- // Corrected typo: 'Enitities' -> 'Entities'
+﻿using JWT_Auth.Entities;
 using JWT_Auth.Models;
+using JWT_Auth.Service;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -8,66 +9,63 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace JWT_Auth.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class AuthController(IConfiguration configuration) : ControllerBase
+    public class AuthController(IAuthService authService) : ControllerBase
     {
-        public static User user = new(); // This is okay for minimal testing
 
         [HttpPost("register")]
-        public ActionResult<User> Register(UserDto request)
+        public async Task<ActionResult<User>> Register(UserDto request)
         {
-            var hashedPassword = new PasswordHasher<User>()
-                                    .HashPassword(user, request.Password);
-            user.Username = request.Username;
-            user.PasswordHash = hashedPassword;
-
+          
+            var user = await authService.RegisterAsync(request);
+            if(user is null)
+            {
+                return BadRequest("User already exists");
+            }
             return Ok(user);
+
+
         }
         [HttpPost("login")]
-        public ActionResult<string> Login(UserDto request)
+        public async Task<ActionResult<TokenResponseDto>> Login(UserDto request)
         {
-            if (user.Username != request.Username)
+            var results = await authService.LoginAsync(request);
+            if (results is null)
             {
-                return BadRequest("User not Found");
+                return BadRequest("Invalid username or Password");
             }
-
-            var result = new PasswordHasher<User>()
-                            .VerifyHashedPassword(user, user.PasswordHash, request.Password);
-
-            if (result == PasswordVerificationResult.Failed)
+            return Ok(results);
+        }
+        [HttpPost("refresh-token")]
+        public async Task<ActionResult<TokenResponseDto>> RefreshToken(RefreshTokenRequestDto request)
+        {
+            var results = await authService.RefreshTokenAsync(request);
+            if (results is null || results.AccessToken is null || results.RefreshToken is null)
             {
-                return BadRequest("Wrong Password");
+                return Unauthorized("Invalid Refresh Token");
             }
-
-            string token = CreateToken(user);
-
-            return Ok(token);
+            return Ok(results);
+        }
+        [Authorize]
+        [HttpGet]
+        public IActionResult AuthenticatedOnlyEndpoint()
+        {
+            return Ok("You are authenticated");
         }
 
-        private string CreateToken(User user)
+        [Authorize(Roles = "Admin")]
+        [HttpGet("admin-only")]
+        public IActionResult AdminOnlyEndpoint()
         {
-            var claims = new List<Claim>
-    {
-        new Claim(ClaimTypes.Name, user.Username)
-    };
-
-            var key = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(configuration.GetValue<string>("AppSettings:Token")!)
-            );
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha512);
-            var tokenDescriptor = new JwtSecurityToken(
-                issuer: configuration.GetValue<string>("AppSettings:Issuer"),
-                audience: configuration.GetValue<string>("AppSettings:Audience"),
-                claims: claims,
-                expires: DateTime.UtcNow.AddDays(1),
-                signingCredentials: creds
-            );
-        return new JwtSecurityTokenHandler().WriteToken(tokenDescriptor);
+            return Ok("You are authenticated");
         }
+
+
 
     }
 }
